@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Backup diario del CRM: pg_dump de la BD del CRM y de Evolution API, cifrado con GPG
+# Backup diario del CRM: pg_dump de la BD del CRM y de Evolution API, y los adjuntos en disco
+# (medios de automatizaciones y de los mensajes: ya no van dentro de la BD), cifrado con GPG
 # (AES-256, clave en .passphrase) y subido a Google Drive con rclone. Avisa por Telegram si falla.
 # Instalación: ~/crm-backups/{backup.sh,.passphrase,.env,rclone/rclone.conf}; cron 07:00 UTC.
 set -Eeuo pipefail
@@ -39,15 +40,24 @@ dump() { # contenedor base usuario prefijo
   [ -s "$OUT/$4_$TS.dump.gpg" ]
 }
 
+# Carpeta de medios del contenedor de la app (volumen crm_media) → tar → gpg
+media() {
+  docker exec crm_app tar -C /crm/server/data/media -cf - . \
+    | gpg --batch --yes --pinentry-mode loopback --passphrase-file "$DIR/.passphrase" \
+          --symmetric --cipher-algo AES256 -o "$OUT/media_$TS.tar.gpg"
+  [ -s "$OUT/media_$TS.tar.gpg" ]
+}
+
 dump crm_db crm crm crm
+media
 EVO_USER="$(docker exec n8n-db printenv POSTGRES_USER)"
 dump n8n-db evolution_db "$EVO_USER" evolution
 
-rclone copy /data "$REMOTE" --include "*_$TS.dump.gpg"
+rclone copy /data "$REMOTE" --include "*_$TS.dump.gpg" --include "media_$TS.tar.gpg"
 rclone delete "$REMOTE" --min-age "${KEEP_REMOTE_DAYS}d"
-find "$OUT" -name '*.dump.gpg' -mtime +"$KEEP_LOCAL_DAYS" -delete
+find "$OUT" \( -name '*.dump.gpg' -o -name 'media_*.tar.gpg' \) -mtime +"$KEEP_LOCAL_DAYS" -delete
 
-SIZE="$(du -ch "$OUT"/*_"$TS".dump.gpg | tail -1 | cut -f1)"
+SIZE="$(du -ch "$OUT"/*_"$TS".dump.gpg "$OUT/media_$TS.tar.gpg" | tail -1 | cut -f1)"
 echo "$(date -u +%FT%TZ) OK $TS $SIZE" >> "$DIR/backup.log"
 # Resumen semanal (domingos) para saber que sigue vivo
 if [ "$(date -u +%u)" = "7" ]; then

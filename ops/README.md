@@ -37,6 +37,12 @@ respaldo: el estado previo al último deploy).
 
 `ops/backup/backup.sh` y `ops/backup/restore-test.sh`.
 
+El backup incluye la carpeta de medios del contenedor (`media_<fecha>.tar.gpg`): ahí están los
+adjuntos de los mensajes y los medios de las automatizaciones, que no van dentro de la BD. Es una
+copia completa diaria, así que su tamaño crece con los adjuntos: si pesa demasiado, activar
+`RETENTION_PURGE_MEDIA=true` vacía la media entrante de más de 30 días. Para restaurarla:
+`gpg -d media_<fecha>.tar.gpg | docker exec -i crm_app tar -C /crm/server/data/media -xf -`.
+
 ## Contenedor de la app
 
 El proceso corre como el usuario `node` (uid 1000), no como root. El entrypoint

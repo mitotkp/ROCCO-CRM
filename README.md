@@ -385,7 +385,7 @@ ALLOW_PUBLIC_SIGNUP=false               # registro abierto (true solo en local/t
 SEED_DEMO_USER=false                    # true crea demo@crm.test al migrar (solo en local)
 DISABLE_BACKGROUND_JOBS=false           # true para scripts y tests
 SECRETS_KEY=                            # 32 bytes base64 (openssl rand -base64 32): cifra tokens en la BD; obligatoria en producción
-MEDIA_DIR=                              # carpeta de medios de automatizaciones
+MEDIA_DIR=                              # carpeta de medios: automatizaciones y adjuntos de los mensajes
 
 # ── WhatsApp (Evolution API) ───────────────────────────
 EVOLUTION_URL=http://localhost:8080
@@ -527,6 +527,7 @@ aplica las migraciones, así la BD de desarrollo queda intacta (nunca contra pro
 | `flows` | Flujos completos: WhatsApp → lead, bot de comentarios de IG, automatizaciones, reservas |
 | `appointments-tz` · `appointment-lead` · `media-noshow` | Zonas horarias, citas, medios y "no asistió" |
 | `dates-kanban` · `contacts-phone` · `reliability` · `push` | Kanban paginado, teléfonos, robustez y push |
+| `message-media` | Adjuntos de los mensajes en disco: proxy, migración desde la BD, retención y limpieza |
 
 En cada push a `main` y en cada pull request, GitHub Actions (`.github/workflows/ci.yml`) corre el
 typecheck y estos tests del servidor contra un Postgres limpio, compila la web con comprobación
