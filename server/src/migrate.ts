@@ -5,7 +5,7 @@ import { readdir, readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { pool } from './db.ts';
-import { hashPassword } from './auth/password.ts';
+import { hashPassword, verifyPassword } from './auth/password.ts';
 
 const migrationsDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'migrations');
 
@@ -44,14 +44,28 @@ async function run() {
     }
   }
 
-  // Usuario demo (necesita hash generado en runtime, no cabe en SQL puro).
-  const hash = await hashPassword('demo1234');
-  await pool.query(
-    `INSERT INTO users (organization_id, email, password_hash, name, role)
-     VALUES ('00000000-0000-0000-0000-000000000001', 'demo@crm.test', $1, 'Usuario Demo', 'owner')
-     ON CONFLICT (email) DO NOTHING`,
-    [hash],
-  );
+  // Usuario demo de desarrollo (necesita hash generado en runtime, no cabe en SQL puro). Solo con
+  // SEED_DEMO_USER=true: este script corre en cada arranque de producción y no debe dejar allí un
+  // owner con una contraseña pública.
+  const DEMO_EMAIL = 'demo@crm.test';
+  const DEMO_PASSWORD = 'demo1234';
+  if (process.env.SEED_DEMO_USER === 'true') {
+    const hash = await hashPassword(DEMO_PASSWORD);
+    await pool.query(
+      `INSERT INTO users (organization_id, email, password_hash, name, role)
+       VALUES ('00000000-0000-0000-0000-000000000001', $1, $2, 'Usuario Demo', 'owner')
+       ON CONFLICT (email) DO NOTHING`,
+      [DEMO_EMAIL, hash],
+    );
+  } else {
+    // Instalaciones anteriores ya lo tienen creado: avisar si sigue con la contraseña de fábrica
+    const demo = (await pool.query<{ password_hash: string }>(
+      'SELECT password_hash FROM users WHERE email = $1', [DEMO_EMAIL],
+    )).rows[0];
+    if (demo && await verifyPassword(DEMO_PASSWORD, demo.password_hash)) {
+      console.warn(`AVISO DE SEGURIDAD: existe el usuario ${DEMO_EMAIL} con la contraseña de fábrica. Bórralo o cámbiale la contraseña.`);
+    }
+  }
 
   console.log('Migraciones completas.');
   await pool.end();

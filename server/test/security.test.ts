@@ -7,7 +7,8 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { createHmac } from 'node:crypto';
+import { createHmac, randomBytes } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import pg from 'pg';
 import jwt from 'jsonwebtoken';
 import { hashPassword } from '../src/auth/password.ts';
@@ -80,6 +81,8 @@ before(async () => {
 
 after(async () => {
   await new Promise(r => fake.close(r));
+  await db.query('DELETE FROM agency_admins WHERE email LIKE $1', [`sec-agencia-%-${stamp}@test.local`]).catch(() => {});
+  await db.query('DELETE FROM agency_clients WHERE email = $1', [ownerEmail]).catch(() => {});
   await db.query('DELETE FROM organizations WHERE id=$1', [orgId]).catch(() => {});
   await db.end();
 });
@@ -184,6 +187,80 @@ test('el login de agencia pasa por el rate limit de auth', async () => {
   const r = await api(null, 'POST', '/agency/auth/login', { email: `nadie-${stamp}@test.local`, password: 'x' });
   assert.equal(r.status, 401);
   assert.ok(r.headers.get('ratelimit-limit') || r.headers.get('ratelimit'), 'cabeceras de rate limit presentes');
+});
+
+// Estos logins van con otra IP de cliente (el servidor confía en X-Forwarded-For de su proxy)
+// para no gastar el cupo del rate limit de auth que comparten los demás tests.
+const OTRA_IP = { 'X-Forwarded-For': '203.0.113.77' };
+
+// El admin de una cuenta elige el email y la contraseña de sus usuarios: si el acceso de agencia
+// se diera por coincidencia de email, crear un usuario con el email de un admin de agencia
+// bastaría para entrar al panel de agencia (y de ahí a todas las cuentas).
+test('un usuario del CRM con el email de un admin de agencia NO obtiene acceso de agencia', async () => {
+  const email = `sec-agencia-a-${stamp}@test.local`;
+  const adminId = (await db.query(
+    `INSERT INTO agency_admins (email, password_hash, name, role) VALUES ($1,$2,'Agencia','superadmin') RETURNING id`,
+    [email, await hashPassword('clave-de-agencia-123')],
+  )).rows[0].id as string;
+
+  // El dueño de una cuenta cualquiera crea un usuario con ese email y una contraseña suya
+  const created = await api(owner.token, 'POST', '/users', { name: 'Impostor', email, password: 'impostor-123', role: 'admin' });
+  assert.equal(created.status, 201, JSON.stringify(created.data));
+
+  const login = await api(null, 'POST', '/auth/login', { email, password: 'impostor-123' }, OTRA_IP);
+  assert.equal(login.status, 200, JSON.stringify(login.data));
+  assert.equal(login.data.agencyToken, null);
+  assert.equal((await api(login.data.token, 'POST', '/agency/auth/exchange')).status, 403);
+
+  // La impersonación tampoco toma su identidad por el email: entra como el dueño de la cuenta
+  const clientId = (await db.query(
+    `INSERT INTO agency_clients (organization_id, name, email) VALUES ($1,'Cliente seguridad',$2) RETURNING id`,
+    [orgId, ownerEmail],
+  )).rows[0].id as string;
+  const agencyToken = jwt.sign({ type: 'agency', adminId, role: 'superadmin' }, SECRET, { expiresIn: '10m' });
+  const imp = await api(agencyToken, 'POST', `/agency/clients/${clientId}/impersonate`);
+  assert.equal(imp.status, 200, JSON.stringify(imp.data));
+  assert.equal((jwt.decode(imp.data.token) as { userId: string }).userId, owner.id);
+});
+
+test('con el vínculo explícito (agency_admins.user_id) el login del CRM sí da acceso de agencia', async () => {
+  // Emails distintos a propósito: lo que cuenta es el vínculo, no el email
+  const hash = await hashPassword('vinculado-123');
+  const userEmail = `sec-vinculado-${stamp}@test.local`;
+  const userId = (await db.query(
+    `INSERT INTO users (organization_id, email, password_hash, name, role) VALUES ($1,$2,$3,'Vinculado','admin') RETURNING id`,
+    [orgId, userEmail, hash],
+  )).rows[0].id as string;
+  const adminId = (await db.query(
+    `INSERT INTO agency_admins (email, password_hash, name, role, user_id) VALUES ($1,$2,'Agencia','admin',$3) RETURNING id`,
+    [`sec-agencia-b-${stamp}@test.local`, hash, userId],
+  )).rows[0].id as string;
+
+  const login = await api(null, 'POST', '/auth/login', { email: userEmail, password: 'vinculado-123' }, OTRA_IP);
+  assert.equal(login.status, 200, JSON.stringify(login.data));
+  assert.ok(login.data.agencyToken);
+  assert.equal((await api(login.data.agencyToken, 'GET', '/agency/clients?limit=1')).status, 200);
+  const ex = await api(login.data.token, 'POST', '/agency/auth/exchange');
+  assert.equal(ex.status, 200, JSON.stringify(ex.data));
+  assert.equal(ex.data.admin.id, adminId);
+
+  // Admin desactivado: el vínculo deja de dar acceso
+  await db.query('UPDATE agency_admins SET is_active=false WHERE id=$1', [adminId]);
+  assert.equal((await api(login.data.token, 'POST', '/agency/auth/exchange')).status, 403);
+});
+
+// SECRETS_KEY: en producción el servidor no debe arrancar guardando credenciales en claro
+test('en producción, sin SECRETS_KEY el arranque falla; en local sigue siendo opcional', () => {
+  const check = (env: Record<string, string>) => spawnSync(
+    process.execPath,
+    ['--input-type=module', '-e', "const m = await import('./src/secrets.ts'); m.requireSecretsKeyInProduction();"],
+    { env: { ...process.env, SECRETS_KEY: '', NODE_ENV: '', ...env }, encoding: 'utf8' },
+  );
+  const prod = check({ NODE_ENV: 'production' });
+  assert.notEqual(prod.status, 0);
+  assert.match(prod.stderr, /Falta SECRETS_KEY/);
+  assert.equal(check({}).status, 0);
+  assert.equal(check({ NODE_ENV: 'production', SECRETS_KEY: randomBytes(32).toString('base64') }).status, 0);
 });
 
 // ── 4. Emails sin distinguir mayúsculas ──────────────────────────────────────

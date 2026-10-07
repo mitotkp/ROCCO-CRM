@@ -32,7 +32,7 @@ const testEnv: Record<string, string> = {
   GOOGLE_CLIENT_SECRET: 'google-test-secret',
   META_APP_SECRET: 'meta-test-secret',
   INSTAGRAM_APP_SECRET: 'ig-test-secret',
-  META_WEBHOOK_ENFORCE_SIGNATURE: 'true',
+  META_WEBHOOK_ENFORCE_SIGNATURE: '',   // valor por defecto: lo no firmado se rechaza
   // Sin alertas a Telegram desde los tests
   ALERT_WEBHOOK_URL: '',
   TELEGRAM_BOT_TOKEN: '',

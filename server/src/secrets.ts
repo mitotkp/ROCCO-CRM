@@ -23,7 +23,15 @@ export function isEncrypted(v: unknown): v is string {
   return typeof v === 'string' && v.startsWith(PREFIX);
 }
 
-// Sin SECRETS_KEY (entorno local) guarda en claro, como antes.
+// En producción la clave es obligatoria: sin ella los tokens se guardarían en claro sin avisar.
+// index.ts lo llama al arrancar para fallar ahí y no en la primera escritura.
+export function requireSecretsKeyInProduction(): void {
+  if (process.env.NODE_ENV === 'production' && !key()) {
+    throw new Error('Falta SECRETS_KEY: en producción es obligatoria para cifrar las credenciales de terceros (openssl rand -base64 32)');
+  }
+}
+
+// Sin SECRETS_KEY (solo entorno local) guarda en claro, como antes.
 export function encryptSecret<T extends string | null | undefined>(value: T): T {
   const k = key();
   if (!k || value == null || value === '' || isEncrypted(value)) return value;

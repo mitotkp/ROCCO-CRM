@@ -17,6 +17,16 @@ test('CORS: origen ajeno → 403 sin cabeceras CORS', async () => {
   assert.equal((await r.json()).error, 'Origen no permitido');
 });
 
+test('CORS: localhost pasa en cualquier puerto, pero no un dominio que solo empieza por "localhost"', async () => {
+  const dev = await fetch(`${BASE}/api/health`, { headers: { Origin: 'http://localhost:5173' } });
+  assert.equal(dev.status, 200);
+  for (const origin of ['http://localhost.sitio-ajeno.example', 'http://localhost:5173@sitio-ajeno.example', 'http://localhostajeno.example:5173']) {
+    const r = await fetch(`${BASE}/api/health`, { headers: { Origin: origin } });
+    assert.equal(r.status, 403, origin);
+    assert.equal(r.headers.get('access-control-allow-origin'), null, origin);
+  }
+});
+
 test('CORS: mismo host (p. ej. entrar por la IP) sí pasa', async () => {
   const host = new URL(BASE).host;
   const r = await fetch(`${BASE}/api/health`, { headers: { Origin: `http://${host}` } });

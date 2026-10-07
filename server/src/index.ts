@@ -44,6 +44,7 @@ import { initWS, issueWsTicket } from './services/ws-manager.ts';
 import { signMediaToken, verifyMediaToken } from './auth/tokens.ts';
 import { validateSession } from './auth/session.ts';
 import { pool } from './db.ts';
+import { requireSecretsKeyInProduction } from './secrets.ts';
 import { readFileSync } from 'fs';
 import { dirname, resolve } from 'path';
 
@@ -51,6 +52,7 @@ const { version: APP_VERSION } = JSON.parse(
   readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../package.json'), 'utf-8'),
 ) as { version: string };
 
+requireSecretsKeyInProduction();
 installErrorAlerts();
 
 const app = express();
@@ -64,7 +66,7 @@ app.use(helmet({
   crossOriginEmbedderPolicy: false,
 }));
 
-// CORS: permite localhost siempre (dev) + dominios configurados en producción
+// CORS: permite localhost siempre (dev, cualquier puerto) + dominios configurados en producción
 const allowedOrigins = new Set([
   process.env.FRONTEND_URL,
   process.env.PUBLIC_URL,
@@ -78,10 +80,11 @@ const allowedOrigins = new Set([
 const corsWarned = new Map<string, number>();
 app.use((req, res, next) => {
   const origin = req.get('origin');
-  if (!origin || origin.startsWith('http://localhost') || allowedOrigins.has(origin)) return next();
-  let sameHost = false;
-  try { sameHost = new URL(origin).host === req.get('host'); } catch { /* origen mal formado */ }
-  if (sameHost) return next();
+  if (!origin || allowedOrigins.has(origin)) return next();
+  // Se compara el host ya parseado: por prefijo, 'http://localhost.sitio-ajeno.example' también pasaba
+  let url: URL | null = null;
+  try { url = new URL(origin); } catch { /* origen mal formado */ }
+  if (url && ((url.protocol === 'http:' && url.hostname === 'localhost') || url.host === req.get('host'))) return next();
   const now = Date.now();
   if ((corsWarned.get(origin) ?? 0) < now - 3600_000) {   // como mucho un aviso por origen y hora
     corsWarned.set(origin, now);
