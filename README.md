@@ -366,6 +366,32 @@ node --env-file=.env scripts/seed-demo.ts
 ```
 
 <details>
+<summary><b>🪟 Evolution API en Windows o macOS (Docker Desktop)</b></summary>
+
+<br>
+
+El `docker-compose.yml` levanta Evolution con `network_mode: host`, que solo funciona en Linux. En
+Docker Desktop hay que sumar el archivo de ajuste, que publica el puerto 8080 y conecta Evolution
+con Postgres y con el CRM:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.desktop.yml up -d db evolution
+```
+
+Y en `server/.env`:
+
+```dotenv
+EVOLUTION_URL=http://localhost:8080
+EVOLUTION_API_KEY=crm-evo-dev-key-2024
+PUBLIC_URL=http://host.docker.internal:3100   # Evolution llama al webhook del CRM por aquí
+```
+
+Con ese `PUBLIC_URL`, los enlaces que genera el CRM (reservas, medios de automatizaciones) salen
+con `host.docker.internal`: sirven en el propio equipo, no desde otros dispositivos.
+
+</details>
+
+<details>
 <summary><b>⚙️ Variables de entorno de <code>server/.env</code></b></summary>
 
 <br>

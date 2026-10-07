@@ -1,0 +1,22 @@
+# Ajuste de desarrollo para Docker Desktop (Windows y macOS), donde `network_mode: host` no
+# publica puertos en el equipo ni alcanza su localhost. Evolution pasa a la red normal de Docker:
+# publica el 8080, habla con Postgres por el nombre del servicio y llama al CRM por
+# host.docker.internal. Se usa junto al compose base:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.desktop.yml up -d db evolution
+#
+# y en server/.env:
+#   EVOLUTION_URL=http://localhost:8080
+#   EVOLUTION_API_KEY=crm-evo-dev-key-2024
+#   PUBLIC_URL=http://host.docker.internal:3100   # para que Evolution alcance el webhook del CRM
+services:
+  evolution:
+    network_mode: !reset null
+    ports:
+      - "8080:8080"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      - DATABASE_CONNECTION_URI=postgresql://crm:crm@db:5432/evolution?schema=evolution_api
+    depends_on:
+      - db
