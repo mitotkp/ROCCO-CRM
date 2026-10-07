@@ -34,6 +34,9 @@ services:
       - DATABASE_CONNECTION_URI=postgresql://crm:crm@localhost:5434/evolution?schema=evolution_api
       - CACHE_REDIS_ENABLED=false
       - DATABASE_SAVE_DATA_INSTANCE=true
+      # Al vincular un número, WhatsApp entrega su historial (decenas de miles de mensajes, grupos
+      # incluidos): que Evolution no lo guarde en su BD. El CRM solo usa los mensajes nuevos.
+      - DATABASE_SAVE_DATA_HISTORIC=false
       - DATABASE_SAVE_DATA_NEW_MESSAGE=true
       - DATABASE_SAVE_MESSAGE_UPDATE=true
       - DATABASE_SAVE_DATA_CONTACTS=true

@@ -229,7 +229,7 @@ app.get('/api/media/:msgId', async (req, res) => {
     if (!r.wa_message_id || !evo.url || !evo.apiKey) return res.status(404).end();
 
     const evoRes = await fetchWithTimeout(
-      `${evo.url}/message/getBase64FromMediaMessage/${r.instance_name}`,
+      `${evo.url}/chat/getBase64FromMediaMessage/${r.instance_name}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'apikey': evo.apiKey },

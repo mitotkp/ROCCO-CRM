@@ -47,6 +47,10 @@ waWebhookRouter.post('/:secret', async (req, res) => {
 
       // Ignorar grupos y newsletters
       if (chatId.endsWith('@g.us') || chatId.endsWith('@newsletter')) return;
+      // Tampoco son mensajes las reacciones (el emoji sobre un mensaje) ni los avisos de protocolo
+      // (borrados, ediciones): guardarlos dejaba burbujas vacías en la bandeja, sumaba no leídos
+      // y podía disparar la regla de «mensaje nuevo».
+      if (msg.messageType === 'reactionMessage' || msg.messageType === 'protocolMessage') return;
 
       const direction = msg.key.fromMe ? 'outbound' : 'inbound';
       const waId = msg.key.id;

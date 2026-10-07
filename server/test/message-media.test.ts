@@ -35,7 +35,7 @@ const fake = http.createServer((req, res) => {
     const body = raw ? JSON.parse(raw) : {};
     calls.push({ path: req.url!, body });
     const reply = (status: number, json: unknown) => res.writeHead(status, { 'Content-Type': 'application/json' }).end(JSON.stringify(json));
-    if (req.url!.startsWith('/message/getBase64FromMediaMessage/')) {
+    if (req.url!.startsWith('/chat/getBase64FromMediaMessage/')) {
       const media = EVO_MEDIA[body.message?.key?.id];
       return media ? reply(201, media) : reply(404, { error: 'sin media' });
     }
@@ -45,7 +45,7 @@ const fake = http.createServer((req, res) => {
     reply(404, { error: 'no simulado' });
   });
 });
-const downloads = () => calls.filter(c => c.path.startsWith('/message/getBase64FromMediaMessage/')).length;
+const downloads = () => calls.filter(c => c.path.startsWith('/chat/getBase64FromMediaMessage/')).length;
 
 const ctx = {} as { orgId: string; token: string; mediaToken: string; conv: string };
 let seq = 0;
