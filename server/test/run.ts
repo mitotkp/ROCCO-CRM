@@ -1,13 +1,19 @@
 // `npm test`: levanta un servidor de pruebas en :3202 apuntado a servicios externos FALSOS
 // (Evolution, Meta/Instagram, Google en http://localhost:4202, que monta flows.test.ts),
-// corre los tests de aislamiento y de flujos, y lo apaga. Usa la BD del .env local.
+// corre los tests de aislamiento y de flujos, y lo apaga.
+// Usa una BD aparte, nunca la de desarrollo: la del .env con el sufijo `_test` (p. ej. crm_test),
+// o la de TEST_DATABASE_URL. La crea si no existe y le aplica las migraciones antes de empezar.
+// Así los tests no dejan organizaciones de prueba ni tokens cifrados con una clave desechable
+// en la BD con la que trabaja el servidor de desarrollo.
 // NUNCA contra producción: crea cuentas y datos de prueba.
 
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { readdirSync, rmSync } from 'node:fs';
+import { readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { parseEnv } from 'node:util';
+import pg from 'pg';
 
 const PORT = process.env.TEST_PORT ?? '3202';
 const FAKE = process.env.TEST_FAKE_URL ?? 'http://localhost:4202';
@@ -15,8 +21,42 @@ const BASE = `http://localhost:${PORT}`;
 // FCM falso de push.test.ts: puerto de TEST_FAKE_URL + 103
 const FCM_FAKE = `http://localhost:${Number(new URL(FAKE).port) + 103}`;
 
+// BD de pruebas. La URL base sale del entorno o del .env (este script corre sin --env-file).
+const dotenv = (() => { try { return parseEnv(readFileSync('.env', 'utf8')); } catch { return {}; } })();
+const baseDbUrl = process.env.DATABASE_URL ?? dotenv.DATABASE_URL;
+if (!baseDbUrl) throw new Error('Falta DATABASE_URL (en el entorno o en server/.env)');
+const testDbUrl = (() => {
+  if (process.env.TEST_DATABASE_URL) return process.env.TEST_DATABASE_URL;
+  const u = new URL(baseDbUrl);
+  u.pathname = `${u.pathname}_test`;
+  return u.toString();
+})();
+const testDbName = decodeURIComponent(new URL(testDbUrl).pathname.slice(1));
+if (!/test/i.test(testDbName)) throw new Error(`La BD de pruebas debe llevar "test" en el nombre (es "${testDbName}")`);
+
+// Crearla si no existe (conectando a la BD base) y dejarla migrada
+async function prepareTestDb() {
+  const admin = new pg.Client({ connectionString: baseDbUrl });
+  await admin.connect();
+  try {
+    const exists = (await admin.query('SELECT 1 FROM pg_database WHERE datname = $1', [testDbName])).rowCount;
+    if (!exists) {
+      await admin.query(`CREATE DATABASE "${testDbName.replace(/"/g, '""')}"`);
+      console.log(`BD de pruebas creada: ${testDbName}`);
+    }
+  } finally {
+    await admin.end();
+  }
+  const mig = spawnSync(process.execPath, ['src/migrate.ts'], {
+    env: { ...dotenv, ...process.env, DATABASE_URL: testDbUrl, SEED_DEMO_USER: '' }, encoding: 'utf8',
+  });
+  if (mig.status !== 0) throw new Error(`Las migraciones de la BD de pruebas fallaron:
+${mig.stdout}${mig.stderr}`);
+}
+
 // Variables de entorno compartidas por el servidor y los tests (las del proceso ganan al .env)
 const testEnv: Record<string, string> = {
+  DATABASE_URL: testDbUrl,
   PORT,
   PUBLIC_URL: BASE,
   ALLOW_PUBLIC_SIGNUP: 'true',
@@ -51,6 +91,12 @@ const testEnv: Record<string, string> = {
 rmSync(testEnv.FCM_SERVICE_ACCOUNT_FILE, { force: true });
 
 const env = { ...process.env, ...testEnv };
+try {
+  await prepareTestDb();
+} catch (e) {
+  console.error((e as Error).message);
+  process.exit(1);
+}
 const server = spawn(process.execPath, ['--env-file=.env', 'src/index.ts'], { env, stdio: ['ignore', 'pipe', 'pipe'] });
 let log = '';
 server.stdout.on('data', d => { log += d; });

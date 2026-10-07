@@ -516,8 +516,9 @@ npm test -- test/flows.test.ts    # un solo archivo
 ```
 
 `npm test` levanta un servidor de pruebas en `:3202` y **simula** Evolution, Meta/Instagram, Google y
-FCM con un servidor falso: no se envía nada real. Crea organizaciones propias en la BD del `.env`
-local (nunca contra producción).
+FCM con un servidor falso: no se envía nada real. Usa una base de datos aparte, la del `.env` con
+el sufijo `_test` (`crm_test`; se puede cambiar con `TEST_DATABASE_URL`): la crea si no existe y le
+aplica las migraciones, así la BD de desarrollo queda intacta (nunca contra producción).
 
 | Archivo | Qué cubre |
 |---|---|

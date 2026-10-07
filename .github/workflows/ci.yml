@@ -41,8 +41,7 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: cp .env.example .env
-      - run: npm run migrate
-      - run: npm test
+      - run: npm test   # crea la BD crm_test y le aplica todas las migraciones desde cero
 
   web:
     name: Web (tipos y build)
