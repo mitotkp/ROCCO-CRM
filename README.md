@@ -366,6 +366,32 @@ node --env-file=.env scripts/seed-demo.ts
 ```
 
 <details>
+<summary><b>🪟 Evolution API en Windows o macOS (Docker Desktop)</b></summary>
+
+<br>
+
+El `docker-compose.yml` levanta Evolution con `network_mode: host`, que solo funciona en Linux. En
+Docker Desktop hay que sumar el archivo de ajuste, que publica el puerto 8080 y conecta Evolution
+con Postgres y con el CRM:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.desktop.yml up -d db evolution
+```
+
+Y en `server/.env`:
+
+```dotenv
+EVOLUTION_URL=http://localhost:8080
+EVOLUTION_API_KEY=crm-evo-dev-key-2024
+PUBLIC_URL=http://host.docker.internal:3100   # Evolution llama al webhook del CRM por aquí
+```
+
+Con ese `PUBLIC_URL`, los enlaces que genera el CRM (reservas, medios de automatizaciones) salen
+con `host.docker.internal`: sirven en el propio equipo, no desde otros dispositivos.
+
+</details>
+
+<details>
 <summary><b>⚙️ Variables de entorno de <code>server/.env</code></b></summary>
 
 <br>
@@ -529,9 +555,19 @@ aplica las migraciones, así la BD de desarrollo queda intacta (nunca contra pro
 | `dates-kanban` · `contacts-phone` · `reliability` · `push` | Kanban paginado, teléfonos, robustez y push |
 | `message-media` | Adjuntos de los mensajes en disco: proxy, migración desde la BD, retención y limpieza |
 
+La web tiene tests de humo con Playwright (`web/e2e/`): inician sesión con la cuenta de
+demostración y comprueban que el kanban, la bandeja, los contactos y el resto de pantallas cargan
+sin errores. Necesitan los datos de `seed-demo.ts` y no modifican nada.
+
+```bash
+cd web
+npx playwright install chromium   # solo la primera vez
+npm run e2e
+```
+
 En cada push a `main` y en cada pull request, GitHub Actions (`.github/workflows/ci.yml`) corre el
 typecheck y estos tests del servidor contra un Postgres limpio, compila la web con comprobación
-de tipos, construye la imagen de producción y revisa las dependencias con `npm audit`.
+de tipos y corre sus tests de humo, construye la imagen de producción y revisa las dependencias con `npm audit`.
 
 ---
 
