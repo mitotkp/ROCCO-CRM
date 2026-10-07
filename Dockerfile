@@ -4,22 +4,24 @@ WORKDIR /build/web
 COPY web/package*.json ./
 RUN npm ci
 COPY web/ ./
-# Saltamos vue-tsc para builds más rápidos; type-check se hace en local
-RUN npx vite build
+# Con comprobación de tipos (vue-tsc): un error de tipos no llega a producción
+RUN npm run build
 
 # ── Stage 2: Imagen de producción ────────────────────────────────────────────
 FROM node:22-alpine
 WORKDIR /crm/server
 
-# tsx para ejecutar TypeScript directamente (el proyecto tiene noEmit: true)
-RUN npm install -g tsx
+# su-exec: el entrypoint lo usa para soltar los privilegios de root
+RUN apk add --no-cache su-exec
 
 # Solo dependencias de producción del servidor
 COPY server/package*.json ./
 RUN npm ci --omit=dev
 
-# Código fuente del servidor (src/ + migrations/ + tsconfig.json)
+# Código fuente del servidor (src/ + migrations/ + tsconfig.json). Node ejecuta el TypeScript
+# directamente, igual que en desarrollo (`node src/index.ts`).
 COPY server/ ./
+RUN chmod +x docker-entrypoint.sh
 
 # Frontend compilado en la ruta que espera index.ts (../../web/dist)
 COPY --from=web-builder /build/web/dist /crm/web/dist
@@ -29,5 +31,5 @@ ENV NODE_ENV=production
 
 EXPOSE 3100
 
-# Ejecutar migraciones y luego arrancar
-CMD ["sh", "-c", "tsx src/migrate.ts && tsx src/index.ts"]
+# Ejecutar migraciones y luego arrancar, como usuario `node` (ver docker-entrypoint.sh)
+ENTRYPOINT ["./docker-entrypoint.sh"]

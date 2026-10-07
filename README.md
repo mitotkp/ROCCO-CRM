@@ -527,6 +527,10 @@ local (nunca contra producción).
 | `appointments-tz` · `appointment-lead` · `media-noshow` | Zonas horarias, citas, medios y "no asistió" |
 | `dates-kanban` · `contacts-phone` · `reliability` · `push` | Kanban paginado, teléfonos, robustez y push |
 
+En cada push a `main` y en cada pull request, GitHub Actions (`.github/workflows/ci.yml`) corre el
+typecheck y estos tests del servidor contra un Postgres limpio, compila la web con comprobación
+de tipos, construye la imagen de producción y revisa las dependencias con `npm audit`.
+
 ---
 
 ## 🗺 Roadmap
