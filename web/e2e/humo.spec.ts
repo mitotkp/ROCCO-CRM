@@ -2,10 +2,12 @@
 // básico responde. No modifican datos: se pueden correr contra la BD local de desarrollo.
 import { test, expect, type Page } from '@playwright/test';
 
-// Un error de JavaScript sin capturar en cualquier pantalla hace fallar el test
+// Un error de JavaScript sin capturar o un aviso de Vue (componente sin importar, prop que falta…)
+// en cualquier pantalla hace fallar el test
 function watchErrors(page: Page): string[] {
   const errors: string[] = [];
   page.on('pageerror', e => errors.push(e.message));
+  page.on('console', m => { if (m.type() === 'warning' && m.text().includes('[Vue warn]')) errors.push(m.text()); });
   return errors;
 }
 
@@ -19,6 +21,32 @@ test('kanban: el tablero muestra etapas y oportunidades, y la vista de lista tam
   await expect(page.getByText('María José Fernández').first()).toBeVisible();
   await page.getByText('Tablero', { exact: true }).click();
   await expect(page.getByText('Calificando', { exact: true }).first()).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+test('kanban: el formulario de oportunidad abre para editar y para crear (sin guardar)', async ({ page }) => {
+  const errors = watchErrors(page);
+  await page.goto('/opportunities');
+
+  // Editar: abre con los datos de la oportunidad y sus pestañas
+  await page.getByText('María José Fernández').first().click();
+  await expect(page.getByPlaceholder('Nombre del contacto')).toHaveValue('María José Fernández');
+  await expect(page.getByPlaceholder('correo@ejemplo.com')).toHaveValue('maria.fernandez@correo.example');
+  await expect(page.getByRole('button', { name: 'Actualizar' })).toBeVisible();
+  const modal = page.locator('.modal-panel');
+  await modal.getByRole('button', { name: /Notas/ }).click();
+  await expect(page.getByPlaceholder('Escribe una nota…')).toBeVisible();
+  await modal.getByRole('button', { name: /Tareas/ }).click();
+  await expect(page.getByPlaceholder('Título de la tarea…')).toBeVisible();
+  await modal.getByRole('button', { name: 'Cancelar' }).click();
+  await expect(page.getByRole('button', { name: 'Actualizar' })).toHaveCount(0);
+
+  // Crear: formulario en blanco
+  await page.getByRole('button', { name: 'Crear' }).first().click();
+  await expect(page.getByRole('heading', { name: 'Nueva oportunidad' })).toBeVisible();
+  await expect(page.getByPlaceholder('Nombre del contacto')).toHaveValue('');
+  await modal.getByRole('button', { name: 'Cancelar' }).click();
+  await expect(page.getByRole('heading', { name: 'Nueva oportunidad' })).toHaveCount(0);
   expect(errors).toEqual([]);
 });
 

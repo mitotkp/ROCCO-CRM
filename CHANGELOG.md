@@ -6,6 +6,35 @@ Versioning basado en [Semantic Versioning](https://semver.org/lang/es/).
 
 ---
 
+## [Sin publicar]
+
+### Seguridad
+- El acceso de agencia desde el login del CRM exige un vínculo explícito (`agency_admins.user_id`); ya no se concede por coincidencia de email
+- El usuario de demostración solo se crea con `SEED_DEMO_USER=true`
+- `SECRETS_KEY` obligatoria en producción; el webhook de Meta rechaza por defecto lo que no venga firmado
+- CORS compara el host exacto de `localhost`
+
+### Infraestructura
+- CI en GitHub Actions: tipos y tests del servidor, build y tests de humo de la web, imagen de producción y `npm audit`
+- La imagen de producción corre sin root y sin `tsx`; Evolution fijado a v2.3.7 en desarrollo
+- Los tests del servidor usan su propia base de datos (`crm_test`)
+- `docker-compose.desktop.yml` para levantar Evolution en Docker Desktop (Windows y macOS)
+
+### Rendimiento y datos
+- Los adjuntos de los mensajes se guardan en disco, no en la base de datos; los existentes se migran solos
+- El backup incluye la carpeta de medios
+- Los permisos por módulo ya no hacen una consulta extra por petición
+
+### Corregido
+- Conectar Google Calendar o Zoom fallaba en una base de datos creada desde cero (migración 049)
+
+### Mantenimiento
+- El motor de automatizaciones se dividió en módulos (`server/src/services/automation/`)
+- `ConversationsView` y `OpportunitiesView` ceden a componentes y composables el modal de nuevo chat, el formulario de oportunidad, el visor, el audio y el formato
+- Tests de humo de la web con Playwright (`web/e2e/`)
+
+---
+
 ## [1.0.0] — 2026-09-24
 
 Primera versión estable de Rocco CRM. Plataforma multi-tenant lista para producción.
