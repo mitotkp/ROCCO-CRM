@@ -255,6 +255,21 @@ test('WhatsApp: mensaje entrante crea contacto, conversación y lead (regla what
 });
 
 // ── 2. Anuncio de origen (click-to-WhatsApp) ────────────────────────────────
+test('WhatsApp: una reacción o un aviso de protocolo no cuentan como mensaje', async () => {
+  const phone = `58414${rnd()}`;
+  const chat = `${phone}@s.whatsapp.net`;
+  assert.equal((await waInbound(phone, '', { messageType: 'reactionMessage', message: { reactionMessage: { text: '👍', key: { id: 'WA-OTRO' } } } })).status, 200);
+  assert.equal((await waInbound(phone, '', { messageType: 'protocolMessage', message: { protocolMessage: { type: 'REVOKE' } } })).status, 200);
+  await waInbound(phone, 'Ahora sí, un mensaje');
+  const conv = await until('conversación', () => one(
+    'SELECT id, unread_count FROM conversations WHERE organization_id = $1 AND wa_chat_id = $2', [org.orgId, chat]));
+  await new Promise(r => setTimeout(r, 300));
+  // Solo los entrantes: la regla de bienvenida de la cuenta de prueba responde con un saliente
+  const msgs = (await db.query(`SELECT msg_type FROM conv_messages WHERE conversation_id = $1 AND direction = 'inbound'`, [conv.id])).rows;
+  assert.deepEqual(msgs.map(m => m.msg_type), ['text']);
+  assert.equal((await one('SELECT unread_count FROM conversations WHERE id = $1', [conv.id])).unread_count, 1);
+});
+
 test('WhatsApp: mensaje desde un anuncio guarda ad_ref en el mensaje y ad_source en el contacto', async () => {
   const phone = `58424${rnd()}`;
   const ad = {
