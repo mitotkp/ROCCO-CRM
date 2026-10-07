@@ -37,6 +37,21 @@ test('bandeja: lista las conversaciones y abre un chat con sus mensajes', async 
   expect(errors).toEqual([]);
 });
 
+test('bandeja: el modal de nueva conversación busca contactos (sin crear nada)', async ({ page }) => {
+  const errors = watchErrors(page);
+  await page.goto('/conversations');
+  await page.getByTitle('Nueva conversación').click();
+  await expect(page.getByRole('heading', { name: 'Nueva conversación' })).toBeVisible();
+  const search = page.getByPlaceholder('Buscar por nombre, teléfono…');
+  await search.fill('Uzcátegui');
+  await expect(page.getByRole('button', { name: /Ricardo Uzcátegui/ })).toBeVisible();
+  await page.getByText('Nuevo número de teléfono').click();
+  await expect(page.getByPlaceholder('+58 414 000 0000')).toBeVisible();
+  await page.locator('h3:has-text("Nueva conversación") + button').click();
+  await expect(page.getByRole('heading', { name: 'Nueva conversación' })).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
+
 test('contactos: la lista carga y el buscador encuentra un contacto', async ({ page }) => {
   const errors = watchErrors(page);
   await page.goto('/contacts');

@@ -15,6 +15,11 @@ import LoadingState from '../components/LoadingState.vue';
 import Spinner from '../components/Spinner.vue';
 import AdSourceCard from '../components/AdSourceCard.vue';
 import BizSelect from '../components/BizSelect.vue';
+import NewChatModal from '../components/conversations/NewChatModal.vue';
+import { useLightbox } from '../composables/useLightbox';
+import { useMediaToken } from '../composables/useMediaToken';
+import { useAudioPlayer } from '../composables/useAudioPlayer';
+import { fmtTime, fmtFull, fmtDate, dateSeparatorLabel, initials, avatarColor, convName } from '../utils/chatFormat';
 
 // ── Tipos ─────────────────────────────────────────────────────────────────────
 interface TimelineItem {
@@ -121,53 +126,14 @@ const q = ref('');
 const msgInput = ref('');
 const threadEl = ref<HTMLElement | null>(null);
 
-// Nuevo chat
+// Modal de nueva conversación (components/conversations/NewChatModal.vue)
 const showNewChatModal = ref(false);
-const newPhone = ref('');
+async function onChatCreated(id: string) {
+  await loadConversations();
+  await selectConversation(id);
+}
 // En móvil no hay teclado físico: el placeholder no menciona Enter/Shift+Enter.
 const isNarrow = window.matchMedia('(max-width: 767px)').matches;
-const newName = ref('');
-const creatingChat = ref(false);
-
-// ── Modal nueva conversación ──────────────────────────────────────────────────
-type ContactRow = { id: string; first_name: string; last_name: string | null; phone: string | null };
-const newChatSearch = ref('');
-const newChatContacts = ref<ContactRow[]>([]);
-const newChatSearching = ref(false);
-const newChatShowManual = ref(false);
-let newChatSearchTimer: ReturnType<typeof setTimeout> | null = null;
-
-async function openNewChatModal() {
-  newChatSearch.value = '';
-  newChatShowManual.value = false;
-  newPhone.value = '';
-  newName.value = '';
-  showNewChatModal.value = true;
-  await fetchNewChatContacts('');
-}
-
-async function fetchNewChatContacts(q: string) {
-  newChatSearching.value = true;
-  try {
-    const res = await api.get<{ data: ContactRow[] }>(`/contacts?limit=30${q ? `&q=${encodeURIComponent(q)}` : ''}`);
-    newChatContacts.value = res.data ?? [];
-  } catch { newChatContacts.value = []; }
-  finally { newChatSearching.value = false; }
-}
-
-function onNewChatSearch() {
-  if (newChatSearchTimer) clearTimeout(newChatSearchTimer);
-  newChatSearchTimer = setTimeout(() => fetchNewChatContacts(newChatSearch.value), 250);
-}
-
-async function startChatWithContact(c: ContactRow) {
-  if (!c.phone) return;
-  newPhone.value = c.phone;
-  newName.value = [c.first_name, c.last_name ?? ''].join(' ').trim();
-  showNewChatModal.value = false;
-  await createChat(c.id);
-}
-
 // Panel de contacto
 const contactBundle = ref<ContactBundle | null>(null);
 const editNotes = ref('');
@@ -304,9 +270,12 @@ onMounted(async () => {
       try {
         const contact = await api.get<{ id: string; first_name: string; last_name?: string | null; phone?: string | null }>(`/contacts/${contactIdParam}`);
         if (contact.phone) {
-          newPhone.value = contact.phone;
-          newName.value = [contact.first_name, contact.last_name ?? ''].join(' ').trim();
-          await createChat(contact.id);
+          const created = await api.post<{ id: string }>('/conversations', {
+            phone: contact.phone.trim(),
+            display_name: [contact.first_name, contact.last_name ?? ''].join(' ').trim() || undefined,
+            contact_id: contact.id,
+          });
+          await onChatCreated(created.id);
         }
       } catch { /* Si no tiene teléfono o hay error, abrir vista vacía */ }
     }
@@ -357,26 +326,6 @@ async function sendMessage() {
 
 function onEnter(e: KeyboardEvent) {
   if (!e.shiftKey) { e.preventDefault(); sendMessage(); }
-}
-
-// ── Nuevo chat ───────────────────────────────────────────────────────────────
-async function createChat(contactId?: string) {
-  if (!newPhone.value.trim()) return;
-  creatingChat.value = true;
-  try {
-    const res = await api.post<{ id: string }>('/conversations', {
-      phone: newPhone.value.trim(),
-      display_name: newName.value.trim() || undefined,
-      contact_id: contactId ?? undefined,
-    });
-    await loadConversations();
-    await selectConversation(res.id);
-    showNewChatModal.value = false;
-    newPhone.value = '';
-    newName.value = '';
-  } finally {
-    creatingChat.value = false;
-  }
 }
 
 // ── Acciones de conversación ──────────────────────────────────────────────────
@@ -472,39 +421,7 @@ async function saveNotes() {
   }
 }
 
-// ── Formateo ─────────────────────────────────────────────────────────────────
-function fmtTime(iso: string): string {
-  const d = new Date(iso), now = new Date();
-  const diff = (now.getTime() - d.getTime()) / 1000;
-  if (diff < 60) return 'ahora';
-  if (diff < 3600) return `${Math.floor(diff / 60)}m`;
-  if (d.toDateString() === now.toDateString()) return d.toLocaleTimeString('es-VE', { hour: '2-digit', minute: '2-digit' });
-  return d.toLocaleDateString('es-VE', { day: '2-digit', month: 'short' });
-}
-
-function fmtFull(iso: string): string {
-  if (!iso) return '';
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return '';
-  return d.toLocaleTimeString('es-VE', { hour: '2-digit', minute: '2-digit' });
-}
-
-function fmtDate(iso: string): string {
-  if (!iso) return '';
-  return new Date(iso).toLocaleDateString('es-VE', { weekday: 'short', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
-}
-
-function dateSeparatorLabel(iso: string): string {
-  const d = new Date(iso);
-  const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const yesterday = new Date(today.getTime() - 86400000);
-  const day = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-  if (day.getTime() === today.getTime()) return 'Hoy';
-  if (day.getTime() === yesterday.getTime()) return 'Ayer';
-  return d.toLocaleDateString('es-VE', { weekday: 'long', day: 'numeric', month: 'long' });
-}
-
+// ── Formateo (utils/chatFormat.ts) ──
 function showDateSeparator(idx: number): boolean {
   if (idx === 0) return true;
   const prev = timeline.value[idx - 1];
@@ -512,83 +429,7 @@ function showDateSeparator(idx: number): boolean {
   return new Date(prev.ts).toDateString() !== new Date(curr.ts).toDateString();
 }
 
-function initials(name: string): string {
-  return name.split(' ').filter(Boolean).map(w => w[0]).slice(0, 2).join('').toUpperCase();
-}
-
-const avatarColors = [
-  'bg-green-100 text-green-700',
-  'bg-purple-100 text-purple-700',
-  'bg-sky-100 text-sky-700',
-  'bg-rose-100 text-rose-700',
-  'bg-amber-100 text-amber-700',
-  'bg-teal-100 text-teal-700',
-  'bg-indigo-100 text-indigo-700',
-  'bg-orange-100 text-orange-700',
-];
-function avatarColor(id: string): string {
-  const n = id.charCodeAt(0) + id.charCodeAt(id.length - 1);
-  return avatarColors[n % avatarColors.length];
-}
-
-function convName(c: Conversation): string {
-  if (c.contact_full_name?.trim()) return c.contact_full_name.trim();
-  // display_name puede ser pushName real o vacío (limpiado en DB)
-  const name = c.display_name?.trim();
-  if (name && !/^\d+$/.test(name)) return name;
-  // Solo mostrar teléfono si la conversación es @c.us (teléfono real) Y tiene ≤ 15 dígitos
-  const isRealPhone = c.wa_chat_id?.endsWith('@c.us');
-  if (isRealPhone && c.phone && /^\d{7,15}$/.test(c.phone)) return `+${c.phone}`;
-  return 'Desconocido';
-}
-
 const totalUnread = computed(() => conversations.value.reduce((s, c) => s + c.unread_count, 0));
-
-// ── Lightbox ─────────────────────────────────────────────────────────────────
-const lightboxUrl = ref<string | null>(null);
-const lightboxMime = ref<string>('image/jpeg');
-
-function openLightbox(url: string, mime = 'image/jpeg') {
-  lightboxUrl.value = url;
-  lightboxMime.value = mime;
-}
-function closeLightbox() { lightboxUrl.value = null; }
-
-// Cerrar lightbox con Escape
-const onKeyDown = (e: KeyboardEvent) => { if (e.key === 'Escape') closeLightbox(); };
-onMounted(() => document.addEventListener('keydown', onKeyDown));
-onUnmounted(() => document.removeEventListener('keydown', onKeyDown));
-
-// ── Token de media ───────────────────────────────────────────────────────────
-// <img>/<video>/<audio> no pueden mandar la cabecera Authorization: la URL lleva un token de
-// media propio (10 min, solo vale para /api/media), nunca la sesión. Se renueva cada 8 min y
-// al volver a la pestaña si ya está viejo.
-const mediaToken = ref('');
-let mediaTokenAt = 0;
-let mediaTimer: ReturnType<typeof setInterval> | undefined;
-async function refreshMediaToken() {
-  try {
-    mediaToken.value = (await api.post<{ token: string }>('/media-token')).token;
-    mediaTokenAt = Date.now();
-  } catch { /* sin permiso o sin red: los adjuntos no se verán, el resto sigue */ }
-}
-const onVisible = () => {
-  if (document.visibilityState === 'visible' && Date.now() - mediaTokenAt > 8 * 60_000) refreshMediaToken();
-};
-onMounted(() => {
-  refreshMediaToken();
-  mediaTimer = setInterval(refreshMediaToken, 8 * 60_000);
-  document.addEventListener('visibilitychange', onVisible);
-});
-onUnmounted(() => {
-  clearInterval(mediaTimer);
-  document.removeEventListener('visibilitychange', onVisible);
-});
-
-function mediaUrl(msgId: unknown): string {
-  if (!mediaToken.value) return '';
-  return `/api/media/${encodeURIComponent(String(msgId))}?t=${encodeURIComponent(mediaToken.value)}`;
-}
 
 const oppStatusColor: Record<string, string> = {
   open: 'bg-blue-100 text-blue-700',
@@ -602,70 +443,9 @@ const apptStatusColor: Record<string, string> = {
   no_show:   'bg-amber-100 text-amber-700',
 };
 
-// ── Reproductor de audio personalizado ────────────────────────────────────────
-const audioState = ref<Record<string, { playing: boolean; currentTime: number; duration: number }>>({});
-const audioElements = new Map<string, HTMLAudioElement>();
-
-onUnmounted(() => {
-  for (const el of audioElements.values()) el.pause();
-  audioElements.clear();
-});
-
-function getAudioEl(msgId: string, src: string): HTMLAudioElement {
-  if (!audioElements.has(msgId)) {
-    const el = new Audio(src);
-    el.ontimeupdate = () => {
-      if (audioState.value[msgId]) audioState.value[msgId].currentTime = el.currentTime;
-    };
-    el.onloadedmetadata = () => {
-      if (!audioState.value[msgId]) audioState.value[msgId] = { playing: false, currentTime: 0, duration: 0 };
-      audioState.value[msgId].duration = el.duration;
-    };
-    el.onended = () => {
-      if (audioState.value[msgId]) { audioState.value[msgId].playing = false; audioState.value[msgId].currentTime = 0; }
-    };
-    audioElements.set(msgId, el);
-    if (!audioState.value[msgId]) audioState.value[msgId] = { playing: false, currentTime: 0, duration: 0 };
-  }
-  return audioElements.get(msgId)!;
-}
-
-function toggleAudio(msgId: string, src: string) {
-  const el = getAudioEl(msgId, src);
-  for (const [id, audioEl] of audioElements) {
-    if (id !== msgId && !audioEl.paused) {
-      audioEl.pause();
-      if (audioState.value[id]) audioState.value[id].playing = false;
-    }
-  }
-  if (el.paused) { el.play(); audioState.value[msgId].playing = true; }
-  else { el.pause(); audioState.value[msgId].playing = false; }
-}
-
-function seekAudio(msgId: string, src: string, e: MouseEvent) {
-  const el = getAudioEl(msgId, src);
-  const bar = e.currentTarget as HTMLElement;
-  el.currentTime = (e.offsetX / bar.clientWidth) * (el.duration || 0);
-}
-
-function formatAudioTime(secs: number): string {
-  if (!secs || isNaN(secs) || !isFinite(secs)) return '0:00';
-  const m = Math.floor(secs / 60);
-  const s = Math.floor(secs % 60);
-  return `${m}:${s.toString().padStart(2, '0')}`;
-}
-
-function audioProgress(msgId: string): number {
-  const st = audioState.value[msgId];
-  if (!st || !st.duration) return 0;
-  return (st.currentTime / st.duration) * 100;
-}
-
-function audioDurationLabel(msgId: string): string {
-  const st = audioState.value[msgId];
-  if (!st) return '';
-  return st.playing || st.currentTime > 0 ? formatAudioTime(st.currentTime) : formatAudioTime(st.duration);
-}
+const { lightboxUrl, lightboxMime, openLightbox, closeLightbox } = useLightbox();
+const { mediaUrl } = useMediaToken();
+const { audioState, toggleAudio, seekAudio, audioProgress, audioDurationLabel } = useAudioPlayer();
 
 // ── Sincronizar nombres desde OpenWA ──────────────────────────────────────────
 const syncingNames = ref(false);
@@ -704,7 +484,7 @@ async function syncNames() {
             <button class="cursor-pointer rounded-lg p-2 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-800" :title="syncingNames ? 'Sincronizando…' : 'Resolver nombres desde WhatsApp'" @click="syncNames" :disabled="syncingNames">
               <RefreshCw class="h-4 w-4" :class="syncingNames ? 'animate-spin' : ''" />
             </button>
-            <button class="cursor-pointer rounded-lg p-2 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-800" title="Nueva conversación" @click="openNewChatModal">
+            <button class="cursor-pointer rounded-lg p-2 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-800" title="Nueva conversación" @click="showNewChatModal = true">
               <Plus class="h-5 w-5" />
             </button>
           </div>
@@ -1347,111 +1127,7 @@ async function syncNames() {
     </Transition>
   </Teleport>
 
-  <!-- ── Modal: Nueva conversación ──────────────────────────────────────────── -->
-  <Teleport to="body">
-    <Transition name="fade">
-      <div v-if="showNewChatModal"
-        class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-        @click.self="showNewChatModal = false">
-        <div class="flex w-full max-w-md flex-col rounded-2xl bg-white shadow-2xl" style="max-height: 80vh">
-
-          <!-- Header del modal -->
-          <div class="flex items-center justify-between border-b border-slate-100 px-5 py-4">
-            <h3 class="text-base font-bold text-slate-900">Nueva conversación</h3>
-            <button class="cursor-pointer rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700" @click="showNewChatModal = false">
-              <X class="h-4 w-4" />
-            </button>
-          </div>
-
-          <!-- Cuerpo -->
-          <div class="flex flex-col gap-3 overflow-hidden p-5">
-
-            <!-- Label + buscador -->
-            <div>
-              <label class="mb-1.5 block text-sm font-bold text-slate-800">
-                Seleccionar contacto <span class="text-red-500">*</span>
-              </label>
-              <div class="relative">
-                <Search class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                <input
-                  v-model="newChatSearch"
-                  @input="onNewChatSearch"
-                  placeholder="Buscar por nombre, teléfono…"
-                  class="w-full rounded-xl border border-slate-200 py-2.5 pl-9 pr-3 text-sm text-slate-900 placeholder-slate-400 shadow-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
-                  autofocus
-                />
-              </div>
-            </div>
-
-            <!-- Lista de contactos -->
-            <div class="overflow-y-auto rounded-xl border border-slate-100 bg-slate-50" style="max-height: 260px; min-height: 100px">
-              <!-- Cargando -->
-              <div v-if="newChatSearching" class="flex items-center justify-center py-8">
-                <RefreshCw class="h-5 w-5 animate-spin text-slate-400" />
-              </div>
-
-              <!-- Resultados -->
-              <template v-else-if="newChatContacts.length">
-                <button v-for="c in newChatContacts" :key="c.id"
-                  class="flex w-full cursor-pointer items-center gap-3 border-b border-slate-100 px-4 py-2.5 text-left transition-colors last:border-0 hover:bg-white"
-                  :class="!c.phone ? 'opacity-50 cursor-not-allowed' : ''"
-                  :disabled="!c.phone"
-                  @click="c.phone && startChatWithContact(c)"
-                  :title="!c.phone ? 'Este contacto no tiene número de teléfono' : ''"
-                >
-                  <div class="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full text-xs font-bold"
-                    :class="avatarColor(c.id)">
-                    {{ initials(`${c.first_name} ${c.last_name ?? ''}`) }}
-                  </div>
-                  <div class="min-w-0 flex-1">
-                    <p class="truncate text-sm font-semibold text-slate-900">{{ c.first_name }} {{ c.last_name ?? '' }}</p>
-                    <p class="truncate text-xs text-slate-500">{{ c.phone ? `+${c.phone}` : 'Sin teléfono' }}</p>
-                  </div>
-                </button>
-              </template>
-
-              <!-- Sin resultados -->
-              <div v-else class="flex flex-col items-center justify-center gap-2 py-8 text-slate-400">
-                <MessageCircle class="h-8 w-8 opacity-30" />
-                <p class="text-sm font-medium">Sin datos</p>
-                <p v-if="newChatSearch" class="text-xs text-slate-400">Sin resultados para "{{ newChatSearch }}"</p>
-              </div>
-            </div>
-
-            <!-- Separador + opción manual -->
-            <div>
-              <button
-                class="flex w-full cursor-pointer items-center gap-2 rounded-lg py-1.5 text-sm font-semibold text-primary transition-colors hover:text-primary-dark"
-                @click="newChatShowManual = !newChatShowManual">
-                <Plus class="h-4 w-4" />
-                Nuevo número de teléfono
-              </button>
-
-              <Transition name="expand">
-                <form v-if="newChatShowManual" @submit.prevent="createChat()" class="mt-2 space-y-2 rounded-xl border border-slate-200 bg-slate-50 p-3">
-                  <div>
-                    <label class="mb-1 block text-xs font-semibold text-slate-700">Teléfono <span class="text-red-500">*</span></label>
-                    <input v-model="newPhone" placeholder="+58 414 000 0000" required
-                      class="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:border-primary focus:outline-none" />
-                  </div>
-                  <div>
-                    <label class="mb-1 block text-xs font-semibold text-slate-700">Nombre (opcional)</label>
-                    <input v-model="newName" placeholder="Ej: Juan García"
-                      class="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:border-primary focus:outline-none" />
-                  </div>
-                  <button type="submit" :disabled="creatingChat"
-                    class="w-full cursor-pointer rounded-lg bg-[#25D366] py-2 text-sm font-bold text-white shadow-sm transition-colors hover:bg-[#1ea855] disabled:opacity-60">
-                    {{ creatingChat ? 'Iniciando…' : 'Iniciar conversación' }}
-                  </button>
-                </form>
-              </Transition>
-            </div>
-
-          </div>
-        </div>
-      </div>
-    </Transition>
-  </Teleport>
+  <NewChatModal v-model:open="showNewChatModal" @created="onChatCreated" />
 </div>
 </template>
 
