@@ -8,6 +8,7 @@ services:
     image: rocco-crm:latest
     container_name: crm_app
     restart: unless-stopped
+    init: true   # reenvía SIGTERM a node: el contenedor para al momento en cada deploy
     ports:
       - "3100:3100"
     environment:

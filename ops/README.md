@@ -36,3 +36,11 @@ respaldo: el estado previo al último deploy).
 ## Backups
 
 `ops/backup/backup.sh` y `ops/backup/restore-test.sh`.
+
+## Contenedor de la app
+
+El proceso corre como el usuario `node` (uid 1000), no como root. El entrypoint
+(`server/docker-entrypoint.sh`) deja el volumen de medios a su nombre al arrancar. El archivo
+`secrets/fcm.json` se monta en solo lectura, así que tiene que ser legible por el uid 1000 del
+servidor (`chmod 644 secrets/fcm.json` o `chown 1000 secrets/fcm.json`): si no, el push queda
+desactivado y el log lo dice (`[push] no se pudo leer …`).
