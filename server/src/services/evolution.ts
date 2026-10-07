@@ -150,7 +150,7 @@ export class EvolutionClient {
   // Descarga un archivo multimedia y devuelve base64+mime.
   async getMediaBase64(messageData: Record<string, unknown>): Promise<{ base64: string; mimetype: string } | null> {
     return this.req<{ base64: string; mimetype: string }>(
-      `/message/getBase64FromMediaMessage/${this.instanceName}`,
+      `/chat/getBase64FromMediaMessage/${this.instanceName}`,
       { method: 'POST', body: JSON.stringify({ message: messageData, convertToMp4: false }) },
       Math.max(externalTimeoutMs(), 30_000),   // la media puede pesar varios MB
     ).catch(() => null);
