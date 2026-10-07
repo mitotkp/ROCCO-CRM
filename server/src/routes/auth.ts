@@ -77,10 +77,12 @@ authRouter.post('/login', async (req, res) => {
 
   const token = signToken({ userId: user.id, organizationId: user.organization_id, role: user.role, tv: user.token_version ?? 0 });
 
-  // Si el email también existe en agency_admins, emitir agency_token automáticamente
+  // Si este usuario está enlazado a un admin de agencia (agency_admins.user_id), emitir también
+  // su agency_token. Nunca por coincidencia de email: los emails de los usuarios los eligen los
+  // admins de cada cuenta.
   const agencyAdmin = await queryOne<{ id: string; role: string }>(
-    'SELECT id, role FROM agency_admins WHERE lower(email) = $1 AND is_active = true',
-    [email],
+    'SELECT id, role FROM agency_admins WHERE user_id = $1 AND is_active = true',
+    [user.id],
   );
   const agencyToken = agencyAdmin
     ? jwt.sign({ type: 'agency', adminId: agencyAdmin.id, role: agencyAdmin.role }, env.jwtSecret, { expiresIn: '30d' })

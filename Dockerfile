@@ -24,6 +24,9 @@ COPY server/ ./
 # Frontend compilado en la ruta que espera index.ts (../../web/dist)
 COPY --from=web-builder /build/web/dist /crm/web/dist
 
+# Producción: el servidor exige SECRETS_KEY (cifrado de credenciales de terceros en la BD)
+ENV NODE_ENV=production
+
 EXPOSE 3100
 
 # Ejecutar migraciones y luego arrancar

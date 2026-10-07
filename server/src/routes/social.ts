@@ -503,13 +503,20 @@ metaWebhookRouter.post('/webhook', verifyMetaSignature, async (req, res) => {
 // Meta firma cada notificación con el secreto de la app (X-Hub-Signature-256). Sin verificarla,
 // cualquiera que conozca el id público de una página podía inyectar comentarios, DMs o leads.
 // Hay dos apps (Facebook e Instagram Login): vale la firma de cualquiera de sus secretos.
-// META_WEBHOOK_ENFORCE_SIGNATURE=true rechaza lo no firmado; si no, solo lo registra (observación).
+// Lo no firmado se rechaza, también si el servidor no tiene ningún secreto con que comprobarlo.
+// META_WEBHOOK_ENFORCE_SIGNATURE=false lo deja en modo observación (se registra y se procesa
+// igual): solo para depurar en local.
 function verifyMetaSignature(req: express.Request & { rawBody?: Buffer }, res: express.Response, next: express.NextFunction) {
   const secrets: [string, string][] = [
     ['meta', process.env.META_APP_SECRET ?? ''],
     ['instagram', process.env.INSTAGRAM_APP_SECRET ?? ''],
   ].filter(([, s]) => s) as [string, string][];
-  if (!secrets.length) return next();
+  const enforce = process.env.META_WEBHOOK_ENFORCE_SIGNATURE !== 'false';
+  if (!secrets.length) {
+    console.warn(`[meta-webhook] sin META_APP_SECRET ni INSTAGRAM_APP_SECRET: no se puede verificar la firma (${enforce ? 'rechazado' : 'modo observación: se procesa igual'})`);
+    if (enforce) return res.status(401).end();
+    return next();
+  }
   const sig = req.get('x-hub-signature-256') ?? '';
   const match = req.rawBody && sig.startsWith('sha256=')
     ? secrets.find(([, s]) => {
@@ -518,7 +525,6 @@ function verifyMetaSignature(req: express.Request & { rawBody?: Buffer }, res: e
         return got.length === expected.length && timingSafeEqual(got, expected);
       })
     : undefined;
-  const enforce = process.env.META_WEBHOOK_ENFORCE_SIGNATURE === 'true';
   if (match) {
     console.log(`[meta-webhook] firma OK (secreto ${match[0]})`);
     return next();

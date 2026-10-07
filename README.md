@@ -370,7 +370,8 @@ node --env-file=.env scripts/seed-demo.ts
 
 <br>
 
-Solo `DATABASE_URL` y `JWT_SECRET` son obligatorias; lo demás activa integraciones.
+Solo `DATABASE_URL` y `JWT_SECRET` son obligatorias (en producción, también `SECRETS_KEY`); lo
+demás activa integraciones.
 
 ```dotenv
 # ── Núcleo ─────────────────────────────────────────────
@@ -381,8 +382,9 @@ PUBLIC_URL=http://localhost:3100        # URL pública (webhooks, enlaces de res
 APP_URL=http://localhost:5175           # URL de la web (redirecciones OAuth)
 FRONTEND_URL=http://localhost:5175
 ALLOW_PUBLIC_SIGNUP=false               # registro abierto (true solo en local/tests)
+SEED_DEMO_USER=false                    # true crea demo@crm.test al migrar (solo en local)
 DISABLE_BACKGROUND_JOBS=false           # true para scripts y tests
-SECRETS_KEY=                            # 32 bytes base64 (openssl rand -base64 32): cifra tokens en la BD
+SECRETS_KEY=                            # 32 bytes base64 (openssl rand -base64 32): cifra tokens en la BD; obligatoria en producción
 MEDIA_DIR=                              # carpeta de medios de automatizaciones
 
 # ── WhatsApp (Evolution API) ───────────────────────────
@@ -393,7 +395,7 @@ EVOLUTION_API_KEY=
 META_APP_ID=
 META_APP_SECRET=
 META_WEBHOOK_VERIFY_TOKEN=
-META_WEBHOOK_ENFORCE_SIGNATURE=true
+META_WEBHOOK_ENFORCE_SIGNATURE=true     # false = modo observación, solo para depurar
 INSTAGRAM_APP_ID=
 INSTAGRAM_APP_SECRET=
 
@@ -497,7 +499,9 @@ Si falla, avisa a Telegram. `ops/backup/restore-test.sh` comprueba que los respa
 - **Secretos de terceros cifrados** en la BD con **AES‑256‑GCM** (tokens de Google, Zoom, Meta y la
   API key de Evolution).
 - **Permisos por módulo** y roles; el panel de agencia usa un JWT separado y la impersonación queda auditada.
-- Webhooks de Meta con **verificación de firma**; WebSocket con tickets de un solo uso.
+  El acceso de agencia desde el login del CRM exige un vínculo explícito (`agency_admins.user_id`),
+  nunca la coincidencia de email.
+- Webhooks de Meta con **verificación de firma** obligatoria; WebSocket con tickets de un solo uso.
 - `helmet`, **rate limit** en login y reservas públicas, validación de entrada con **zod**.
 - Retención y purga de medios, y alertas operativas a Telegram.
 

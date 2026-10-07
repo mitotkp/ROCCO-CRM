@@ -170,8 +170,8 @@ agencyRouter.patch('/auth/me', requireAgencyAuth, async (req, res) => {
   res.json(publicAdmin(admin));
 });
 
-// Intercambia un CRM token válido por un agency token, si el email del usuario
-// está registrado como agency admin.
+// Intercambia un CRM token válido por un agency token, si el usuario está enlazado a un
+// admin de agencia (agency_admins.user_id; nunca por coincidencia de email).
 agencyRouter.post('/auth/exchange', async (req, res) => {
   const header = req.headers.authorization;
   if (!header?.startsWith('Bearer ')) {
@@ -188,15 +188,9 @@ agencyRouter.post('/auth/exchange', async (req, res) => {
     return res.status(401).json({ error: 'Token CRM inválido o expirado' });
   }
 
-  const user = await queryOne<{ email: string }>(
-    'SELECT email FROM users WHERE id = $1',
-    [crmClaims.userId],
-  );
-  if (!user) return res.status(404).json({ error: 'Usuario no encontrado' });
-
   const admin = await queryOne<AgencyAdminRow>(
-    'SELECT * FROM agency_admins WHERE lower(email) = lower($1) AND is_active = true',
-    [user.email],
+    'SELECT * FROM agency_admins WHERE user_id = $1 AND is_active = true',
+    [crmClaims.userId],
   );
   if (!admin) return res.status(403).json({ error: 'Sin acceso al panel de agencia' });
 
@@ -549,16 +543,16 @@ agencyRouter.post('/clients/:id/impersonate', requireAgencyAuth, async (req, res
   if (!client) return res.status(404).json({ error: 'Cliente no encontrado' });
   if (!client.organization_id) return res.status(400).json({ error: 'Este cliente no tiene CRM provisionado aún' });
 
-  // Busca al agency admin en la tabla users por email para mantener su identidad
-  // al entrar al CRM del cliente (solo cambia la org, no el usuario).
-  const agencyAdmin = await queryOne<AgencyAdminRow>(
+  // Si el agency admin tiene un usuario del CRM enlazado (agency_admins.user_id), entra con su
+  // identidad al CRM del cliente (solo cambia la org, no el usuario).
+  const agencyAdmin = await queryOne<AgencyAdminRow & { user_id: string | null }>(
     'SELECT * FROM agency_admins WHERE id = $1',
     [req.agencyAuth!.adminId],
   );
-  const adminCrmUser = agencyAdmin
+  const adminCrmUser = agencyAdmin?.user_id
     ? await queryOne<{ id: string; role: string }>(
-        'SELECT id, role FROM users WHERE lower(email) = lower($1)',
-        [agencyAdmin.email],
+        'SELECT id, role FROM users WHERE id = $1',
+        [agencyAdmin.user_id],
       )
     : null;
 
