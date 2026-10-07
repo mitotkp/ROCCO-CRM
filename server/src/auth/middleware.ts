@@ -1,6 +1,6 @@
 import type { Request, Response, NextFunction } from 'express';
 import { verifyToken, type AuthClaims } from './tokens.ts';
-import { validateSession } from './session.ts';
+import { validateSession, type SessionUser } from './session.ts';
 
 // Adjunta los claims del JWT a req.auth. Todas las rutas protegidas leen
 // req.auth.organizationId para filtrar por tenant (aislamiento row-level).
@@ -9,6 +9,8 @@ declare global {
   namespace Express {
     interface Request {
       auth?: AuthClaims;
+      // Rol y permisos del usuario leídos de la BD al validar la sesión (los usa auth/perms.ts)
+      authUser?: SessionUser;
     }
   }
 }
@@ -34,6 +36,7 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
       if (!user) return res.status(401).json({ error: 'Sesión cerrada. Vuelve a iniciar sesión.' });
       // Rol fresco de la BD (el del JWT puede ser de hace semanas)
       req.auth = { ...claims, role: user.role };
+      req.authUser = user;
       next();
     })
     .catch(next);

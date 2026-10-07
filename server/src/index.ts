@@ -40,12 +40,13 @@ import { automationsRouter } from './routes/automations.ts';
 import { automationMediaRouter, servePublicMedia } from './routes/automation-media.ts';
 import { resumeTimedRuns, recoverStuckRuns } from './services/automation-engine.ts';
 import { runRetention } from './services/retention.ts';
+import { isFileRef, mediaFilePath, saveMessageMedia, moveDataUriToDisk, migrateMediaToDisk } from './services/message-media.ts';
 import { initWS, issueWsTicket } from './services/ws-manager.ts';
 import { signMediaToken, verifyMediaToken } from './auth/tokens.ts';
 import { validateSession } from './auth/session.ts';
 import { pool } from './db.ts';
 import { requireSecretsKeyInProduction } from './secrets.ts';
-import { readFileSync } from 'fs';
+import { readFileSync, existsSync } from 'fs';
 import { dirname, resolve } from 'path';
 
 const { version: APP_VERSION } = JSON.parse(
@@ -150,8 +151,8 @@ app.post('/api/media-token', requireAuth, requireModule('conversations'), (req, 
 });
 
 // Proxy de media — acepta por query (?t=) SOLO el token de media (nunca la sesión).
-// Cuando media_url es un data URI cacheado lo sirve directo; si no, pide
-// el base64 a Evolution API y lo cachea para futuros accesos.
+// El adjunto vive en disco (services/message-media.ts) y media_url guarda su referencia; si
+// todavía no se ha descargado, se pide a Evolution API y se guarda para los siguientes accesos.
 // Cache-Control private: son adjuntos de clientes, ningún proxy/CDN compartido debe guardarlos.
 app.get('/api/media/:msgId', async (req, res) => {
   try {
@@ -162,6 +163,7 @@ app.get('/api/media/:msgId', async (req, res) => {
     if (!(await validateSession(auth))) return res.status(401).end();
 
     type MsgRow = {
+      id: string;
       media_url: string | null;
       media_mime: string | null;
       wa_message_id: string;
@@ -171,27 +173,44 @@ app.get('/api/media/:msgId', async (req, res) => {
       msg_raw: Record<string, unknown> | null;
     };
     const rowRes = await pool.query<MsgRow>(
-      `SELECT cm.media_url, cm.media_mime, cm.wa_message_id,
+      `SELECT cm.id, cm.media_url, cm.media_mime, cm.wa_message_id,
               ws.evo_url, ws.evo_api_key, ws.instance_name
        FROM conv_messages cm
-       JOIN wa_settings ws ON ws.organization_id = cm.organization_id
+       LEFT JOIN wa_settings ws ON ws.organization_id = cm.organization_id
        WHERE cm.id = $1 AND cm.organization_id = $2
-       ORDER BY ws.is_default DESC
+       ORDER BY ws.is_default DESC NULLS LAST
        LIMIT 1`,
       [req.params.msgId, auth.organizationId],
     );
     const r = rowRes.rows[0];
     if (!r) return res.status(404).end();
-    const evo = resolveEvo(r);
+    const orgId = auth.organizationId;
 
-    // Camino 1: data URI cacheado
+    // Camino 1: archivo en disco. sendFile atiende peticiones Range (avanzar en audios y videos).
+    // Si el archivo falta (disco restaurado sin los adjuntos), se intenta de nuevo con Evolution.
+    if (isFileRef(r.media_url)) {
+      const file = mediaFilePath(r.media_url);
+      if (file && existsSync(file)) {
+        res.setHeader('Content-Type', r.media_mime || 'application/octet-stream');
+        res.setHeader('Cache-Control', 'private, max-age=86400');
+        return res.sendFile(path.basename(file), { root: path.dirname(file) }, err => {
+          if (err && !res.headersSent) res.status(404).end();
+        });
+      }
+    }
+
+    // Camino 1b: data URI de antes de pasar los adjuntos a disco. Se sirve y se mueve al disco.
     if (r.media_url?.startsWith('data:')) {
       const [header, b64] = r.media_url.split(',');
       const mime = header.split(':')[1]?.split(';')[0] ?? 'application/octet-stream';
+      moveDataUriToDisk({ id: r.id, organization_id: orgId, media_url: r.media_url })
+        .catch(e => console.error('media: no se pudo pasar a disco:', e));
       res.setHeader('Content-Type', mime);
       res.setHeader('Cache-Control', 'private, max-age=86400');
       return res.send(Buffer.from(b64, 'base64'));
     }
+    if (!r.instance_name) return res.status(404).end();   // sin WhatsApp configurado no hay de dónde bajarla
+    const evo = resolveEvo(r);
 
     // Camino 2: URL HTTP directa (por si Evolution entrega URL pública)
     if (r.media_url?.startsWith('http')) {
@@ -224,14 +243,13 @@ app.get('/api/media/:msgId', async (req, res) => {
     if (!mediaJson.base64) return res.status(404).end();
 
     const mime = mediaJson.mimetype ?? r.media_mime ?? 'application/octet-stream';
-    const dataUri = mediaJson.base64.startsWith('data:') ? mediaJson.base64 : `data:${mime};base64,${mediaJson.base64}`;
-    const rawB64 = dataUri.split(',')[1];
+    const rawB64 = mediaJson.base64.startsWith('data:') ? mediaJson.base64.split(',')[1] : mediaJson.base64;
     const binary = Buffer.from(rawB64, 'base64');
 
-    pool.query(
-      'UPDATE conv_messages SET media_url = $1, media_mime = $2 WHERE id = $3',
-      [dataUri, mime, req.params.msgId],
-    ).catch(() => {});
+    // Guardarla en disco para los siguientes accesos (si falla, se volverá a pedir a Evolution)
+    saveMessageMedia(orgId, r.id, binary)
+      .then(ref => pool.query('UPDATE conv_messages SET media_url = $1, media_mime = $2 WHERE id = $3', [ref, mime, r.id]))
+      .catch(e => console.error('media: no se pudo guardar en disco:', e));
 
     res.setHeader('Content-Type', mime);
     res.setHeader('Cache-Control', 'private, max-age=86400');
@@ -306,6 +324,8 @@ server.listen(env.port, () => {
   every('resumeTimedRuns', () => resumeTimedRuns(), 60_000);
   // Runs que quedaron en 'running' por un reinicio/corte de luz: al arrancar y cada 5 min
   every('recoverStuckRuns', () => recoverStuckRuns(), 5 * 60_000, true);
+  // Adjuntos guardados en la BD como base64 por versiones anteriores: se pasan a disco por tandas
+  every('migrateMediaToDisk', () => migrateMediaToDisk(), 5 * 60_000, true);
   // Limpieza diaria de tablas que crecen sin límite (notificaciones, runs, actividad…)
   every('retention', () => runRetention(), 24 * 60 * 60_000, true);
   // Refrescar tokens de Instagram cada 30 días; también al arrancar para renovar de inmediato si toca

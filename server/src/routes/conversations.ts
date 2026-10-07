@@ -7,6 +7,7 @@ import { evolutionFor } from '../services/evolution.ts';
 import { broadcast } from '../services/ws-manager.ts';
 import { sendIgDm, sendFbMessage, sendFbPrivateReply, isOutsideWindow } from '../services/instagram.ts';
 import { normalizePhone } from '../phone.ts';
+import { moveDataUriToDisk } from '../services/message-media.ts';
 
 export const conversationsRouter = Router();
 
@@ -207,6 +208,12 @@ conversationsRouter.post('/:id/messages', async (req, res) => {
     const msgRes = await pool.query<{ id: string; created_at: string; wa_message_id: string | null }>(
       insertSql, insertVals,
     );
+
+    // La imagen enviada llega como data URI: su archivo va a disco y en la BD queda la referencia
+    if (msgRes.rows[0]?.id && mediaUrl?.startsWith('data:')) {
+      await moveDataUriToDisk({ id: msgRes.rows[0].id, organization_id: orgId, media_url: mediaUrl })
+        .catch(e => console.error('media: no se pudo pasar a disco la imagen enviada:', e));
+    }
 
     await pool.query(
       `UPDATE conversations SET last_message_at = NOW(), last_message_preview = $1, updated_at = NOW() WHERE id = $2`,

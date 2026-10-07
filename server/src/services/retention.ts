@@ -14,14 +14,16 @@
 // - ig_processed_comments con más de 30 días: es la deduplicación del polling de comentarios. El
 //   polling ignora comentarios de más de IG_COMMENT_MAX_AGE_DAYS (ig-comments.ts, < 30), así que
 //   borrar la marca nunca hace que un comentario viejo vuelva a disparar el DM.
-// - conv_messages.media_url (data URI cacheado, puede pesar ~1 MB por mensaje): SOLO si
+// - adjuntos de los mensajes (archivo en disco, services/message-media.ts): SOLO si
 //   RETENTION_PURGE_MEDIA=true. El proxy /api/media/:id puede volver a pedirla a Evolution
 //   (getBase64FromMediaMessage por wa_message_id), pero eso depende de que Evolution conserve el
 //   mensaje en su BD y de que WhatsApp aún tenga el archivo (sus servidores lo guardan un tiempo
 //   limitado): no está garantizado, así que viene apagado. Aun activado, solo se vacían mensajes
-//   ENTRANTES con wa_message_id; las imágenes enviadas desde el CRM nunca (su data URI es la única copia).
+//   ENTRANTES con wa_message_id; las imágenes enviadas desde el CRM nunca (su archivo es la única copia).
+// - archivos de adjuntos sin mensaje (conversación u organización borradas): siempre.
 
 import { pool } from '../db.ts';
+import { deleteMessageMedia, sweepOrphanMedia } from './message-media.ts';
 
 const BATCH = 5000;
 
@@ -57,12 +59,28 @@ const RULES: Rule[] = [
   },
 ];
 
-const MEDIA_RULE: Rule = {
-  name: 'media cacheada', table: 'conv_messages', key: 'id', org: 'n.organization_id',
-  where: `n.media_url LIKE 'data:%' AND n.direction = 'inbound' AND n.wa_message_id IS NOT NULL
-          AND n.created_at < NOW() - INTERVAL '30 days'`,
-  update: 'media_url = NULL',
-};
+// Media de mensajes entrantes con más de 30 días: se vacía la referencia y se borra su archivo.
+// (Los data URI que queden de versiones anteriores también cuentan.)
+async function purgeOldMedia(orgId: string | null): Promise<number> {
+  let total = 0;
+  for (;;) {
+    const rows = (await pool.query<{ id: string; ref: string }>(
+      `UPDATE conv_messages SET media_url = NULL WHERE id IN (
+         SELECT n.id FROM conv_messages n
+         WHERE (n.media_url LIKE 'file:%' OR n.media_url LIKE 'data:%')
+           AND n.direction = 'inbound' AND n.wa_message_id IS NOT NULL
+           AND n.created_at < NOW() - INTERVAL '30 days'
+           AND ($1::uuid IS NULL OR n.organization_id = $1)
+         LIMIT ${BATCH})
+       RETURNING id, 'file:' || organization_id || '/' || id AS ref`,
+      [orgId],
+    )).rows;
+    for (const r of rows) await deleteMessageMedia(r.ref);
+    total += rows.length;
+    if (rows.length < BATCH) return total;
+    await new Promise(res => setTimeout(res, 200));
+  }
+}
 
 async function applyRule(r: Rule, orgId: string | null): Promise<number> {
   const pick = `SELECT n.${r.key} FROM ${r.table} n WHERE ${r.where} AND ($1::uuid IS NULL OR ${r.org} = $1) LIMIT ${BATCH}`;
@@ -80,10 +98,10 @@ async function applyRule(r: Rule, orgId: string | null): Promise<number> {
 
 // Devuelve cuántas filas tocó cada regla. `orgId` limita a una organización (tests).
 export async function runRetention(opts: { orgId?: string; purgeMedia?: boolean } = {}): Promise<Record<string, number>> {
-  const rules = [...RULES];
-  if (opts.purgeMedia ?? process.env.RETENTION_PURGE_MEDIA === 'true') rules.push(MEDIA_RULE);
   const done: Record<string, number> = {};
-  for (const r of rules) done[r.name] = await applyRule(r, opts.orgId ?? null);
+  for (const r of RULES) done[r.name] = await applyRule(r, opts.orgId ?? null);
+  if (opts.purgeMedia ?? process.env.RETENTION_PURGE_MEDIA === 'true') done['media cacheada'] = await purgeOldMedia(opts.orgId ?? null);
+  done['adjuntos sin mensaje'] = await sweepOrphanMedia(opts.orgId);
   const summary = Object.entries(done).filter(([, n]) => n).map(([k, n]) => `${k}: ${n}`).join(', ');
   if (summary) console.log(`[retention] limpieza diaria → ${summary}`);
   return done;
