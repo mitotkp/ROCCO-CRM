@@ -555,9 +555,19 @@ aplica las migraciones, así la BD de desarrollo queda intacta (nunca contra pro
 | `dates-kanban` · `contacts-phone` · `reliability` · `push` | Kanban paginado, teléfonos, robustez y push |
 | `message-media` | Adjuntos de los mensajes en disco: proxy, migración desde la BD, retención y limpieza |
 
+La web tiene tests de humo con Playwright (`web/e2e/`): inician sesión con la cuenta de
+demostración y comprueban que el kanban, la bandeja, los contactos y el resto de pantallas cargan
+sin errores. Necesitan los datos de `seed-demo.ts` y no modifican nada.
+
+```bash
+cd web
+npx playwright install chromium   # solo la primera vez
+npm run e2e
+```
+
 En cada push a `main` y en cada pull request, GitHub Actions (`.github/workflows/ci.yml`) corre el
 typecheck y estos tests del servidor contra un Postgres limpio, compila la web con comprobación
-de tipos, construye la imagen de producción y revisa las dependencias con `npm audit`.
+de tipos y corre sus tests de humo, construye la imagen de producción y revisa las dependencias con `npm audit`.
 
 ---
 
